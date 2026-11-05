@@ -3,6 +3,7 @@
   "short_name": "Protsendid",
   "description": "Protsentarvutuse harjutused 7. klassile",
   "lang": "et",
+  "id": "./?app=repetiitor",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
