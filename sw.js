@@ -1,7 +1,7 @@
 // Service worker: network-first, so updates pushed to GitHub show up when online;
 // falls back to the cached copy when offline.
 // Bump CACHE when you change the list of files below.
-const CACHE = 'percent-practice-v1';
+const CACHE = 'percent-practice-v2';
 const FILES = [
   './',
   './index.html',

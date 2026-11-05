@@ -121,6 +121,31 @@
     background: none; border: 0; padding: 4px 0; margin-top: 14px;
     color: var(--muted); text-decoration: underline; font-size: .9rem; cursor: pointer;
   }
+  .badges { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+  .badge {
+    display: flex; gap: 10px; align-items: center;
+    border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; background: #fff;
+  }
+  .badge .ico { font-size: 1.6rem; line-height: 1; }
+  .badge .bn { font-weight: 600; font-size: .92rem; line-height: 1.25; }
+  .badge .bd { font-size: .78rem; color: var(--muted); line-height: 1.25; }
+  .badge.locked { opacity: .45; filter: grayscale(1); }
+  .badge.got { border-color: var(--ok); background: var(--ok-soft); }
+  #badgeCount { color: var(--muted); font-weight: 400; font-size: .95rem; }
+  .suggest { margin: 4px 0 16px; padding: 10px 12px; border-radius: 8px; background: #fff; border: 1px dashed var(--ok); }
+  #toasts {
+    position: fixed; left: 50%; transform: translateX(-50%); z-index: 50;
+    bottom: calc(16px + env(safe-area-inset-bottom));
+    display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none;
+    width: calc(100% - 32px); max-width: 420px;
+  }
+  .toast {
+    background: #222; color: #fff; border-radius: 10px; padding: 10px 16px; font-size: .95rem;
+    box-shadow: 0 4px 16px rgba(0,0,0,.25); opacity: 0; transform: translateY(10px);
+    transition: opacity .3s, transform .3s; text-align: center;
+  }
+  .toast.show { opacity: 1; transform: none; }
+  #confetti { position: fixed; inset: 0; pointer-events: none; z-index: 40; }
   .hidden { display: none !important; }
 
   /* ---------- phone layout ---------- */
@@ -143,6 +168,9 @@
     .fb, .hint { margin-left: 0; }
     .toolbar .btn, .actions .btn { flex: 1; padding: 12px 10px; }
     .progress .txt { font-size: .85rem; }
+    .badges { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .badge { padding: 7px 8px; gap: 7px; }
+    .badge .ico { font-size: 1.35rem; }
   }
 </style>
 </head>
@@ -185,6 +213,11 @@
     <div><button class="linkbtn" id="resetStatsBtn">Nulli statistika</button></div>
   </section>
 
+  <section class="card" id="badgesCard">
+    <h2>Saavutused <span id="badgeCount"></span></h2>
+    <div class="badges" id="badgeList"></div>
+  </section>
+
   <section id="setArea" class="hidden">
     <div class="progress">
       <div class="txt"><span id="progressTxt"></span><span id="levelTxt"></span></div>
@@ -199,6 +232,10 @@
     <section class="card success hidden" id="successBox">
       <h2>🎉 Seeria läbitud!</h2>
       <p id="successTxt"></p>
+      <div class="suggest hidden" id="suggestBox">
+        <p id="suggestTxt" style="margin:0 0 8px"></p>
+        <button class="btn ghost" id="suggestBtn"></button>
+      </div>
       <div class="actions">
         <button class="btn ghost" id="repeatBtn">↺ Lahenda samad uuesti</button>
         <button class="btn" id="againBtn">Uus seeria</button>
@@ -208,6 +245,9 @@
 
   <p class="note">Tulemused salvestatakse ainult selle seadme brauserisse.</p>
 </main>
+
+<div id="toasts"></div>
+<canvas id="confetti" class="hidden"></canvas>
 
 <!-- ===================== ENGINE (no DOM access) ===================== -->
 <script id="engine">
@@ -588,14 +628,57 @@ if (typeof module !== 'undefined') module.exports = PctEngine;
   'use strict';
   const STORE = 'percentPractice.v1';
   const LEVEL_NAMES = { 1: 'Lihtne', 2: 'Keskmine', 3: 'Raske' };
-  const WRONG_MSGS = ['Pole õige. Proovi uuesti!', 'Veel mitte. Kontrolli arvutust.', 'Proovi uuesti, sa saad hakkama!'];
+  const LEVEL_PART = { 1: 'lihtsat', 2: 'keskmist', 3: 'rasket' };
   const HINT_AFTER = 3;
+  const PERFECT_FOR_SUGGEST = 2;
+  const STREAK_MARKS = [3, 5, 7, 10, 15];
+
+  const MSG = {
+    praise: ['Õige! ✓', 'Täpselt! ✓', 'Väga hea! ✓', 'Tubli! ✓', 'Just nii! ✓', 'Suurepärane! ✓', 'Õige vastus! ✓'],
+    persist: ['Õige! Hea, et proovisid edasi. ✓', 'Said hakkama! ✓', 'Õige! Vigadest õpitaksegi. ✓', 'Nüüd on õige! Visadus tasus ära. ✓'],
+    afterHint: ['Õige! Vihjest oli abi – hästi tehtud! ✓', 'Said selle kätte! Just nii õpitaksegi. ✓',
+                'Õige! Raske ülesanne, aga sa ei andnud alla. ✓', 'Õige! Nüüd tead, kuidas selliseid lahendada. ✓'],
+    wrong: ['Pole veel õige. Proovi uuesti!', 'Vead on õppimise osa. Proovi uuesti!',
+            'Võta rahulikult ja vaata arvutus üle.', 'Veel mitte – aga sa saad hakkama!', 'Kontrolli arvutust veel kord.'],
+    atHint: 'Pole õige. Vaata allolevat vihjet – see aitab!',
+    afterHintWrong: ['Mine vihje järgi samm-sammult.', 'Kirjuta vahetulemused paberile ja proovi uuesti.',
+                     'Ära anna alla – iga katse aitab!']
+  };
+
+  const BADGES = [
+    { id: 'first',       ico: '🎯', name: 'Esimene seeria',   desc: 'Läbi esimene seeria' },
+    { id: 'perfect',     ico: '⭐', name: 'Täiuslik seeria',  desc: 'Läbi seeria ühegi veata' },
+    { id: 'comeback',    ico: '💪', name: 'Ei anna alla',     desc: 'Lahenda ülesanne pärast vihjet' },
+    { id: 'streak10',    ico: '🔥', name: '10 järjest',       desc: '10 ülesannet järjest esimesel katsel õigesti' },
+    { id: 'sets5',       ico: '🥉', name: '5 seeriat',        desc: 'Läbi 5 seeriat' },
+    { id: 'sets10',      ico: '🥈', name: '10 seeriat',       desc: 'Läbi 10 seeriat' },
+    { id: 'sets25',      ico: '🥇', name: '25 seeriat',       desc: 'Läbi 25 seeriat' },
+    { id: 'medium',      ico: '📈', name: 'Keskmine tase',    desc: 'Läbi seeria keskmisel tasemel' },
+    { id: 'hard',        ico: '🏔️', name: 'Raske tase',       desc: 'Läbi seeria raskel tasemel' },
+    { id: 'hardPerfect', ico: '💎', name: 'Meister',          desc: 'Läbi raske seeria ühegi veata' },
+    { id: 'days3',       ico: '📅', name: '3 päeva järjest',  desc: 'Harjuta kolmel päeval järjest' },
+    { id: 'days7',       ico: '🗓️', name: 'Terve nädal',      desc: 'Harjuta seitsmel päeval järjest' }
+  ];
 
   const $ = (id) => document.getElementById(id);
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
   const allTypes = Object.keys(PctEngine.TYPES);
 
+  // ---------- storage ----------
+  const freshStats = () => ({ passed: { 1: 0, 2: 0, 3: 0 }, perfect: { 1: 0, 2: 0, 3: 0 }, days: { last: '', streak: 0 } });
   function load() {
-    try { const s = JSON.parse(localStorage.getItem(STORE)); if (s && s.settings) return s; } catch (e) {}
+    try {
+      const s = JSON.parse(localStorage.getItem(STORE));
+      if (s && s.settings) {
+        // migrate older saved data
+        const f = freshStats();
+        s.stats = Object.assign(f, s.stats || {});
+        s.stats.perfect = Object.assign({ 1: 0, 2: 0, 3: 0 }, s.stats.perfect);
+        s.stats.days = Object.assign({ last: '', streak: 0 }, s.stats.days);
+        s.badges = s.badges || {};
+        return s;
+      }
+    } catch (e) {}
     return null;
   }
   function save() {
@@ -605,8 +688,102 @@ if (typeof module !== 'undefined') module.exports = PctEngine;
   let state = load() || {
     settings: { level: 1, types: allTypes.slice(), count: 10 },
     set: null,
-    stats: { passed: { 1: 0, 2: 0, 3: 0 } }
+    stats: freshStats(),
+    badges: {}
   };
+
+  // ---------- dates (local time) ----------
+  const dayKey = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const today = () => dayKey(new Date());
+  const yesterday = () => { const d = new Date(); d.setDate(d.getDate() - 1); return dayKey(d); };
+
+  function recordPracticeDay() {
+    const d = state.stats.days, t = today();
+    if (d.last === t) return;
+    d.streak = d.last === yesterday() ? d.streak + 1 : 1;
+    d.last = t;
+    renderStats();
+    checkBadges();
+  }
+  function currentDayStreak() {
+    const d = state.stats.days;
+    return (d.last === today() || d.last === yesterday()) ? d.streak : 0;
+  }
+
+  // ---------- toasts ----------
+  function toast(text) {
+    const el = document.createElement('div');
+    el.className = 'toast'; el.textContent = text;
+    $('toasts').appendChild(el);
+    requestAnimationFrame(() => el.classList.add('show'));
+    setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 400); }, 3500);
+  }
+
+  // ---------- badges ----------
+  function award(id) {
+    if (state.badges[id]) return;
+    state.badges[id] = today();
+    const b = BADGES.find(x => x.id === id);
+    toast(`🏅 Uus saavutus: ${b.ico} ${b.name}`);
+    save();
+    renderBadges();
+  }
+  function checkBadges() {
+    const st = state.stats, p = st.passed, total = p[1] + p[2] + p[3];
+    if (total >= 1) award('first');
+    if (st.perfect[1] + st.perfect[2] + st.perfect[3] >= 1) award('perfect');
+    if (total >= 5) award('sets5');
+    if (total >= 10) award('sets10');
+    if (total >= 25) award('sets25');
+    if (p[2] >= 1) award('medium');
+    if (p[3] >= 1) award('hard');
+    if (st.perfect[3] >= 1) award('hardPerfect');
+    if (st.days.streak >= 3) award('days3');
+    if (st.days.streak >= 7) award('days7');
+  }
+  function renderBadges() {
+    const list = $('badgeList');
+    list.innerHTML = '';
+    let got = 0;
+    BADGES.forEach(b => {
+      const has = !!state.badges[b.id];
+      if (has) got++;
+      const el = document.createElement('div');
+      el.className = 'badge ' + (has ? 'got' : 'locked');
+      el.innerHTML = '<div class="ico"></div><div><div class="bn"></div><div class="bd"></div></div>';
+      el.querySelector('.ico').textContent = b.ico;
+      el.querySelector('.bn').textContent = b.name;
+      el.querySelector('.bd').textContent = b.desc;
+      list.appendChild(el);
+    });
+    $('badgeCount').textContent = `${got} / ${BADGES.length}`;
+  }
+
+  // ---------- confetti ----------
+  function confetti() {
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const cv = $('confetti'), ctx = cv.getContext('2d');
+    const W = cv.width = window.innerWidth, H = cv.height = window.innerHeight;
+    cv.classList.remove('hidden');
+    const colors = ['#9e0303', '#1f7a3a', '#e2c25a', '#2f6fd6', '#e8743b', '#8e44ad'];
+    const parts = Array.from({ length: 160 }, () => ({
+      x: Math.random() * W, y: -20 - Math.random() * H * 0.5,
+      vx: (Math.random() - 0.5) * 3, vy: 2 + Math.random() * 3.5,
+      w: 6 + Math.random() * 6, h: 8 + Math.random() * 8,
+      r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.25, c: pick(colors)
+    }));
+    const t0 = performance.now();
+    (function frame(t) {
+      ctx.clearRect(0, 0, W, H);
+      parts.forEach(q => {
+        q.x += q.vx; q.y += q.vy; q.r += q.vr; q.vy += 0.03;
+        ctx.save(); ctx.translate(q.x, q.y); ctx.rotate(q.r);
+        ctx.fillStyle = q.c; ctx.fillRect(-q.w / 2, -q.h / 2, q.w, q.h); ctx.restore();
+      });
+      if (t - t0 < 3500) requestAnimationFrame(frame);
+      else { ctx.clearRect(0, 0, W, H); cv.classList.add('hidden'); }
+    })(t0);
+  }
 
   // ---------- settings ----------
   function renderSettings() {
@@ -645,9 +822,16 @@ if (typeof module !== 'undefined') module.exports = PctEngine;
   function renderStats() {
     const p = state.stats.passed;
     const total = p[1] + p[2] + p[3];
-    $('statsLine').textContent = total
-      ? `Läbitud seeriaid: ${total} (lihtne ${p[1]}, keskmine ${p[2]}, raske ${p[3]})`
-      : 'Läbitud seeriaid: 0';
+    const ds = currentDayStreak();
+    const line = $('statsLine');
+    line.textContent = `Läbitud seeriaid: ${total}`;
+    if (ds >= 2) {
+      const sp = document.createElement('span');
+      sp.className = 'streak';
+      sp.style.color = '#fff';
+      sp.textContent = ` · 🔥 ${ds} päeva järjest`;
+      line.appendChild(sp);
+    }
   }
 
   // ---------- set ----------
@@ -661,12 +845,14 @@ if (typeof module !== 'undefined') module.exports = PctEngine;
     state.set = {
       level: state.settings.level,
       done: false,
+      streak: 0,
       tasks: tasks.map(t => ({ ...t, wrong: 0, solved: false, input: '', fb: '', fbClass: '' }))
     };
     save();
     renderSet();
+    $('setArea').scrollIntoView({ behavior: 'smooth', block: 'start' });
     const first = document.querySelector('#taskList input');
-    if (first) first.focus();
+    if (first) first.focus({ preventScroll: true });
   }
 
   function renderSet() {
@@ -676,10 +862,11 @@ if (typeof module !== 'undefined') module.exports = PctEngine;
     const list = $('taskList');
     list.innerHTML = '';
     s.tasks.forEach((t, idx) => list.appendChild(buildTask(t, idx)));
-    updateProgress();
+    updateProgress(false);
   }
 
   function buildTask(t, idx) {
+    const s = state.set;
     const card = document.createElement('div');
     card.className = 'card task' + (t.solved ? ' solved' : '');
     card.innerHTML = `
@@ -711,12 +898,27 @@ if (typeof module !== 'undefined') module.exports = PctEngine;
       const r = PctEngine.check(input.value, t.answer);
       t.input = input.value;
       if (r.status === 'correct') {
-        t.solved = true; t.fb = 'Õige! ✓'; t.fbClass = 'ok';
+        t.solved = true; t.fbClass = 'ok';
+        if (t.wrong === 0) {
+          s.streak = (s.streak || 0) + 1;
+          t.fb = pick(MSG.praise);
+          if (STREAK_MARKS.includes(s.streak)) t.fb += `  🔥 ${s.streak} järjest!`;
+          if (s.streak >= 10) award('streak10');
+        } else if (t.wrong >= HINT_AFTER) {
+          t.fb = pick(MSG.afterHint);
+          award('comeback');
+        } else {
+          t.fb = pick(MSG.persist);
+        }
         card.classList.add('solved'); input.disabled = true; btn.disabled = true;
         hint.classList.add('hidden');
+        recordPracticeDay();
       } else if (r.status === 'wrong') {
         t.wrong++;
-        t.fb = t.wrong === HINT_AFTER ? 'Pole õige. Vaata allolevat vihjet!' : WRONG_MSGS[(t.wrong - 1) % WRONG_MSGS.length];
+        s.streak = 0;
+        if (t.wrong < HINT_AFTER) t.fb = pick(MSG.wrong);
+        else if (t.wrong === HINT_AFTER) t.fb = MSG.atHint;
+        else t.fb = pick(MSG.afterHintWrong);
         t.fbClass = 'wrong';
         if (t.wrong >= HINT_AFTER) hint.classList.remove('hidden');
         input.select();
@@ -725,8 +927,8 @@ if (typeof module !== 'undefined') module.exports = PctEngine;
       }
       fb.textContent = t.fb; fb.className = 'fb ' + t.fbClass;
       save();
-      updateProgress();
-      if (t.solved) focusNext(idx);
+      updateProgress(true);
+      if (t.solved && !state.set.done) focusNext(idx);
     };
     btn.addEventListener('click', doCheck);
     input.addEventListener('keydown', e => { if (e.key === 'Enter') doCheck(); });
@@ -743,26 +945,40 @@ if (typeof module !== 'undefined') module.exports = PctEngine;
     }
   }
 
-  function updateProgress() {
+  function updateProgress(live) {
     const s = state.set;
     const solved = s.tasks.filter(t => t.solved).length;
     const total = s.tasks.length;
-    $('progressTxt').textContent = `Õigeid: ${solved} / ${total}`;
+    $('progressTxt').textContent = `Õigeid: ${solved} / ${total}` + (s.streak >= 3 ? `  🔥 ${s.streak}` : '');
     $('levelTxt').textContent = `Raskusaste: ${LEVEL_NAMES[s.level]}`;
     $('progressFill').style.width = (100 * solved / total) + '%';
 
+    const wrongs = s.tasks.reduce((a, t) => a + t.wrong, 0);
     if (solved === total) {
       if (!s.done) {
         s.done = true;
-        state.stats.passed[s.level] = (state.stats.passed[s.level] || 0) + 1;
+        state.stats.passed[s.level]++;
+        if (wrongs === 0) state.stats.perfect[s.level]++;
         save();
         renderStats();
-        setTimeout(() => $('successBox').scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+        checkBadges();
+        if (live) {
+          confetti();
+          setTimeout(() => $('successBox').scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+        }
       }
-      const wrongs = s.tasks.reduce((a, t) => a + t.wrong, 0);
       $('successTxt').textContent = wrongs === 0
         ? 'Kõik vastused olid esimesel katsel õiged. Suurepärane!'
-        : `Kõik ${total} ülesannet on lahendatud. Valesid katseid oli kokku ${wrongs}.`;
+        : `Kõik ${total} ülesannet on lahendatud. Valesid katseid oli kokku ${wrongs} – ja sa jõudsid ikkagi lõpuni!`;
+      // level suggestion
+      const next = s.level + 1;
+      const showSuggest = s.level < 3 && state.stats.perfect[s.level] >= PERFECT_FOR_SUGGEST && state.settings.level === s.level;
+      $('suggestBox').classList.toggle('hidden', !showSuggest);
+      if (showSuggest) {
+        $('suggestTxt').textContent = `Oled ${LEVEL_PART[s.level]} taset juba ${state.stats.perfect[s.level]} korda vigadeta läbinud. Aeg proovida järgmist taset?`;
+        $('suggestBtn').textContent = `Proovi ${LEVEL_PART[next]} taset`;
+        $('suggestBtn').dataset.level = next;
+      }
       $('successBox').classList.remove('hidden');
     } else {
       $('successBox').classList.add('hidden');
@@ -775,7 +991,7 @@ if (typeof module !== 'undefined') module.exports = PctEngine;
     if (!s.done && s.tasks.some(t => t.solved || t.wrong)) {
       if (!confirm('Kõik selle seeria vastused kustutatakse ja ülesandeid saab uuesti lahendada. Kas jätkad?')) return;
     }
-    s.done = false;
+    s.done = false; s.streak = 0;
     s.tasks.forEach(t => { t.wrong = 0; t.solved = false; t.input = ''; t.fb = ''; t.fbClass = ''; });
     save();
     renderSet();
@@ -789,20 +1005,24 @@ if (typeof module !== 'undefined') module.exports = PctEngine;
   $('toSettingsBtn').addEventListener('click', () => {
     $('settings').scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
+  $('suggestBtn').addEventListener('click', () => {
+    state.settings.level = +$('suggestBtn').dataset.level;
+    save(); renderSettings();
+    startSet();
+  });
   $('resetStatsBtn').addEventListener('click', () => {
-    if (!confirm('Kas nullida läbitud seeriate statistika?')) return;
-    state.stats = { passed: { 1: 0, 2: 0, 3: 0 } };
-    save(); renderStats();
+    if (!confirm('Kas nullida statistika, saavutused ja päevade seeria?')) return;
+    state.stats = freshStats();
+    state.badges = {};
+    save(); renderStats(); renderBadges();
   });
 
   $('startBtn').addEventListener('click', startSet);
-  $('againBtn').addEventListener('click', () => {
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    startSet();
-  });
+  $('againBtn').addEventListener('click', startSet);
 
   renderSettings();
   renderStats();
+  renderBadges();
   renderSet();
 
   // PWA: service worker works only over https (e.g. GitHub Pages) or localhost
