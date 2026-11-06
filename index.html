@@ -227,7 +227,7 @@
     <p class="note">Kümnendkoha eraldajaks sobib nii koma kui ka punkt. Seeria on läbitud, kui kõik vastused on õiged.</p>
     <div class="toolbar">
       <button class="btn ghost" id="restartBtn">↺ Lahenda uuesti</button>
-      <button class="btn ghost" id="toSettingsBtn">Uus seeria</button>
+      <button class="btn ghost" id="newSetBtn">Uus seeria</button>
     </div>
     <div id="taskList"></div>
     <section class="card success hidden" id="successBox">
@@ -1003,9 +1003,7 @@ if (typeof module !== 'undefined') module.exports = PctEngine;
 
   $('restartBtn').addEventListener('click', restartSet);
   $('repeatBtn').addEventListener('click', restartSet);
-  $('toSettingsBtn').addEventListener('click', () => {
-    $('settings').scrollIntoView({ behavior: 'smooth', block: 'start' });
-  });
+  $('newSetBtn').addEventListener('click', startSet);
   $('suggestBtn').addEventListener('click', () => {
     state.settings.level = +$('suggestBtn').dataset.level;
     save(); renderSettings();
